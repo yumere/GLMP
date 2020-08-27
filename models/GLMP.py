@@ -1,19 +1,15 @@
-import torch
-import torch.nn as nn
-from torch.optim import lr_scheduler
-from torch import optim
-import torch.nn.functional as F
-import random
-import numpy as np
 # import matplotlib.pyplot as plt
 # import seaborn as sns
-import os
 import json
+import random
 
-from utils.measures import wer, moses_multi_bleu
-from utils.masked_cross_entropy import *
-from utils.config import *
+import numpy as np
+from torch import optim
+from torch.optim import lr_scheduler
+
 from models.modules import *
+from utils.masked_cross_entropy import *
+from utils.measures import moses_multi_bleu
 
 
 class GLMP(nn.Module):
@@ -23,7 +19,7 @@ class GLMP(nn.Module):
         self.task = task
         self.input_size = lang.n_words
         self.output_size = lang.n_words
-        self.hidden_size = hidden_size    
+        self.hidden_size = hidden_size
         self.lang = lang
         self.lr = lr
         self.n_layers = n_layers
@@ -61,18 +57,19 @@ class GLMP(nn.Module):
             self.extKnow.cuda()
             self.decoder.cuda()
 
-    def print_loss(self):    
+    def print_loss(self):
         print_loss_avg = self.loss / self.print_every
         print_loss_g = self.loss_g / self.print_every
         print_loss_v = self.loss_v / self.print_every
         print_loss_l = self.loss_l / self.print_every
-        self.print_every += 1     
+        self.print_every += 1
         return 'L:{:.2f},LE:{:.2f},LG:{:.2f},LP:{:.2f}'.format(print_loss_avg, print_loss_g, print_loss_v, print_loss_l)
-    
+
     def save_model(self, dec_type):
         name_data = "KVR/" if self.task=='' else "BABI/"
         layer_info = str(self.n_layers)
-        directory = 'save/GLMP-'+args["addName"]+name_data+str(self.task)+'HDD'+str(self.hidden_size)+'BSZ'+str(args['batch'])+'DR'+str(self.dropout)+'L'+layer_info+'lr'+str(self.lr)+str(dec_type)                 
+        directory = f'save/GLMP-{args["addName"]}{name_data}{self.task}HDD{self.hidden_size}BSZ{args["batch"]}' \
+                    f'DR{self.dropout}L{layer_info}lr{self.lr}{dec_type}'
         if not os.path.exists(directory):
             os.makedirs(directory)
         torch.save(self.encoder, directory + '/enc.th')
@@ -81,7 +78,7 @@ class GLMP(nn.Module):
 
     def reset(self):
         self.loss, self.print_every, self.loss_g, self.loss_v, self.loss_l = 0, 1, 0, 0, 0
-    
+
     def _cuda(self, x):
         if USE_CUDA:
             return torch.Tensor(x).cuda()
@@ -94,21 +91,21 @@ class GLMP(nn.Module):
         self.encoder_optimizer.zero_grad()
         self.extKnow_optimizer.zero_grad()
         self.decoder_optimizer.zero_grad()
-        
+
         # Encode and Decode
-        use_teacher_forcing = random.random() < args['teacher_forcing_ratio'] 
+        use_teacher_forcing = random.random() < args['teacher_forcing_ratio']
         max_target_length = max(data['response_lengths'])
         all_decoder_outputs_vocab, all_decoder_outputs_ptr, _, _, global_pointer = self.encode_and_decode(data, max_target_length, use_teacher_forcing, False)
-        
+
         # Loss calculation and backpropagation
         loss_g = self.criterion_bce(global_pointer, data['selector_index'])
         loss_v = masked_cross_entropy(
-            all_decoder_outputs_vocab.transpose(0, 1).contiguous(), 
-            data['sketch_response'].contiguous(), 
+            all_decoder_outputs_vocab.transpose(0, 1).contiguous(),
+            data['sketch_response'].contiguous(),
             data['response_lengths'])
         loss_l = masked_cross_entropy(
-            all_decoder_outputs_ptr.transpose(0, 1).contiguous(), 
-            data['ptr_index'].contiguous(), 
+            all_decoder_outputs_ptr.transpose(0, 1).contiguous(),
+            data['ptr_index'].contiguous(),
             data['response_lengths'])
         loss = loss_g + loss_v + loss_l
         loss.backward()
@@ -126,49 +123,49 @@ class GLMP(nn.Module):
         self.loss_g += loss_g.item()
         self.loss_v += loss_v.item()
         self.loss_l += loss_l.item()
-    
+
     def encode_and_decode(self, data, max_target_length, use_teacher_forcing, get_decoded_words):
         # Build unknown mask for memory
         if args['unk_mask'] and self.decoder.training:
             story_size = data['context_arr'].size()
             rand_mask = np.ones(story_size)
-            bi_mask = np.random.binomial([np.ones((story_size[0],story_size[1]))], 1-self.dropout)[0]
-            rand_mask[:,:,0] = rand_mask[:,:,0] * bi_mask
+            bi_mask = np.random.binomial([np.ones((story_size[0], story_size[1]))], 1 - self.dropout)[0]
+            rand_mask[:, :, 0] = rand_mask[:, :, 0] * bi_mask
             conv_rand_mask = np.ones(data['conv_arr'].size())
             for bi in range(story_size[0]):
                 start, end = data['kb_arr_lengths'][bi],  data['kb_arr_lengths'][bi] + data['conv_arr_lengths'][bi]
-                conv_rand_mask[:end-start,bi,:] = rand_mask[bi,start:end,:]
+                conv_rand_mask[:end - start, bi, :] = rand_mask[bi, start:end, :]
             rand_mask = self._cuda(rand_mask)
             conv_rand_mask = self._cuda(conv_rand_mask)
             conv_story = data['conv_arr'] * conv_rand_mask.long()
             story = data['context_arr'] * rand_mask.long()
         else:
             story, conv_story = data['context_arr'], data['conv_arr']
-        
+
         # Encode dialog history and KB to vectors
         dh_outputs, dh_hidden = self.encoder(conv_story, data['conv_arr_lengths'])
         global_pointer, kb_readout = self.extKnow.load_memory(story, data['kb_arr_lengths'], data['conv_arr_lengths'], dh_hidden, dh_outputs)
-        encoded_hidden = torch.cat((dh_hidden.squeeze(0), kb_readout), dim=1) 
-        
+        encoded_hidden = torch.cat((dh_hidden.squeeze(0), kb_readout), dim=1)
+
         # Get the words that can be copy from the memory
         batch_size = len(data['context_arr_lengths'])
         self.copy_list = []
         for elm in data['context_arr_plain']:
             elm_temp = [ word_arr[0] for word_arr in elm ]
-            self.copy_list.append(elm_temp) 
-        
+            self.copy_list.append(elm_temp)
+
         outputs_vocab, outputs_ptr, decoded_fine, decoded_coarse = self.decoder.forward(
-            self.extKnow, 
-            story.size(), 
+            self.extKnow,
+            story.size(),
             data['context_arr_lengths'],
-            self.copy_list, 
-            encoded_hidden, 
-            data['sketch_response'], 
-            max_target_length, 
-            batch_size, 
-            use_teacher_forcing, 
-            get_decoded_words, 
-            global_pointer) 
+            self.copy_list,
+            encoded_hidden,
+            data['sketch_response'],
+            max_target_length,
+            batch_size,
+            use_teacher_forcing,
+            get_decoded_words,
+            global_pointer)
 
         return outputs_vocab, outputs_ptr, decoded_fine, decoded_coarse, global_pointer
 
@@ -177,8 +174,8 @@ class GLMP(nn.Module):
         # Set to not-training mode to disable dropout
         self.encoder.train(False)
         self.extKnow.train(False)
-        self.decoder.train(False)  
-        
+        self.decoder.train(False)
+
         ref, hyp = [], []
         acc, total = 0, 0
         dialog_acc_dict = {}
@@ -199,7 +196,7 @@ class GLMP(nn.Module):
                             global_entity_list += [item[k].lower().replace(' ', '_') for k in item.keys()]
                 global_entity_list = list(set(global_entity_list))
 
-        for j, data_dev in pbar: 
+        for j, data_dev in pbar:
             # Encode and Decode
             _, _, decoded_fine, decoded_coarse, global_pointer = self.encode_and_decode(data_dev, self.max_resp_len, False, True)
             decoded_coarse = np.transpose(decoded_coarse)
@@ -207,19 +204,23 @@ class GLMP(nn.Module):
             for bi, row in enumerate(decoded_fine):
                 st = ''
                 for e in row:
-                    if e == 'EOS': break
-                    else: st += e + ' '
+                    if e == 'EOS':
+                        break
+                    else:
+                        st += e + ' '
                 st_c = ''
                 for e in decoded_coarse[bi]:
-                    if e == 'EOS': break
-                    else: st_c += e + ' '
+                    if e == 'EOS':
+                        break
+                    else:
+                        st_c += e + ' '
                 pred_sent = st.lstrip().rstrip()
                 pred_sent_coarse = st_c.lstrip().rstrip()
                 gold_sent = data_dev['response_plain'][bi].lstrip().rstrip()
                 ref.append(gold_sent)
                 hyp.append(pred_sent)
-                
-                if args['dataset'] == 'kvr': 
+
+                if args['dataset'] == 'kvr':
                     # compute F1 SCORE
                     single_f1, count = self.compute_prf(data_dev['ent_index'][bi], pred_sent.split(), global_entity_list, data_dev['kb_arr_plain'][bi])
                     F1_pred += single_f1
@@ -245,7 +246,7 @@ class GLMP(nn.Module):
 
                 # compute Per-response Accuracy Score
                 total += 1
-                if (gold_sent == pred_sent):
+                if gold_sent == pred_sent:
                     acc += 1
 
                 if args['genSample']:
@@ -263,9 +264,9 @@ class GLMP(nn.Module):
         if args['dataset'] == 'kvr':
             F1_score = F1_pred / float(F1_count)
             print("F1 SCORE:\t{}".format(F1_pred/float(F1_count)))
-            print("\tCAL F1:\t{}".format(F1_cal_pred/float(F1_cal_count))) 
-            print("\tWET F1:\t{}".format(F1_wet_pred/float(F1_wet_count))) 
-            print("\tNAV F1:\t{}".format(F1_nav_pred/float(F1_nav_count))) 
+            print("\tCAL F1:\t{}".format(F1_cal_pred/float(F1_cal_count)))
+            print("\tWET F1:\t{}".format(F1_wet_pred/float(F1_wet_count)))
+            print("\tNAV F1:\t{}".format(F1_nav_pred/float(F1_nav_count)))
             print("BLEU SCORE:\t"+str(bleu_score))
         else:
             dia_acc = 0
@@ -273,19 +274,19 @@ class GLMP(nn.Module):
                 if len(dialog_acc_dict[k])==sum(dialog_acc_dict[k]):
                     dia_acc += 1
             print("Dialog Accuracy:\t"+str(dia_acc*1.0/len(dialog_acc_dict.keys())))
-        
-        if (early_stop == 'BLEU'):
-            if (bleu_score >= matric_best):
+
+        if early_stop == 'BLEU':
+            if bleu_score >= matric_best:
                 self.save_model('BLEU-'+str(bleu_score))
                 print("MODEL SAVED")
             return bleu_score
-        elif (early_stop == 'ENTF1'):
-            if (F1_score >= matric_best):
+        elif early_stop == 'ENTF1':
+            if F1_score >= matric_best:
                 self.save_model('ENTF1-{:.4f}'.format(F1_score))
-                print("MODEL SAVED")  
+                print("MODEL SAVED")
             return F1_score
         else:
-            if (acc_score >= matric_best):
+            if acc_score >= matric_best:
                 self.save_model('ACC-{:.4f}'.format(acc_score))
                 print("MODEL SAVED")
             return acc_score
@@ -306,15 +307,15 @@ class GLMP(nn.Module):
                         FP += 1
             precision = TP / float(TP+FP) if (TP+FP)!=0 else 0
             recall = TP / float(TP+FN) if (TP+FN)!=0 else 0
-            F1 = 2 * precision * recall / float(precision + recall) if (precision+recall)!=0 else 0
+            F1 = 2 * precision * recall / float(precision + recall) if (precision + recall) != 0 else 0
         else:
             precision, recall, F1, count = 0, 0, 0, 0
         return F1, count
 
     def print_examples(self, batch_idx, data, pred_sent, pred_sent_coarse, gold_sent):
         kb_len = len(data['context_arr_plain'][batch_idx])-data['conv_arr_lengths'][batch_idx]-1
-        print("{}: ID{} id{} ".format(data['domain'][batch_idx], data['ID'][batch_idx], data['id'][batch_idx]))
-        for i in range(kb_len): 
+        print(f'{data["domain"][batch_idx]}: ID{data["ID"][batch_idx]} id{data["id"][batch_idx]}')
+        for i in range(kb_len):
             kb_temp = [w for w in data['context_arr_plain'][batch_idx][i] if w!='PAD']
             kb_temp = kb_temp[::-1]
             if 'poi' not in kb_temp:
@@ -324,7 +325,7 @@ class GLMP(nn.Module):
             if word_arr[1]==flag_uttr:
                 uttr.append(word_arr[0])
             else:
-                print(flag_uttr,': ', " ".join(uttr))
+                print(f'{flag_uttr} : {" ".join(uttr)}')
                 flag_uttr = word_arr[1]
                 uttr = [word_arr[0]]
         print('Sketch System Response : ', pred_sent_coarse)

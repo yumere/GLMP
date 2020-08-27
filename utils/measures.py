@@ -2,15 +2,16 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 from __future__ import unicode_literals
-import numpy
 
 import os
 import re
 import subprocess
 import tempfile
-import numpy as np
 
+import numpy
+import numpy as np
 from six.moves import urllib
+
 
 def wer(r, h):
     """
@@ -92,8 +93,7 @@ def moses_multi_bleu(hypotheses, references, lowercase=False):
     reference_file.write(b"\n")
     reference_file.flush()
 
-
-     # Calculate BLEU using multi-bleu script
+    # Calculate BLEU using multi-bleu script
     with open(hypothesis_file.name, "r") as read_pred:
         bleu_cmd = [multi_bleu_path]
         if lowercase:
