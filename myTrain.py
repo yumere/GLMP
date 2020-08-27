@@ -1,3 +1,4 @@
+from tqdm import tqdm
 from models.GLMP import *
 
 '''
@@ -26,22 +27,21 @@ else:
 avg_best, cnt, acc = 0.0, 0, 0.0
 train, dev, test, testOOV, lang, max_resp_len = prepare_data_seq(args['task'], batch_size=int(args['batch']))
 
-model = globals()[args['decoder']](
-    int(args['hidden']), 
-    lang, 
-    max_resp_len, 
-    args['path'], 
-    args['task'], 
-    lr=float(args['learn']), 
-    n_layers=int(args['layer']), 
-    dropout=float(args['drop']))
+model = GLMP(hidden_size=int(args['hidden']),
+             lang=lang,
+             max_resp_len=max_resp_len,
+             path=args['path'],
+             task=args['task'],
+             lr=float(args['learn']),
+             n_layers=int(args['layer']),
+             dropout=float(args['drop']))
 
 for epoch in range(200):
     print("Epoch:{}".format(epoch))  
     # Run the train function
-    pbar = tqdm(enumerate(train),total=len(train))
+    pbar = tqdm(enumerate(train), total=len(train))
     for i, data in pbar:
-        model.train_batch(data, int(args['clip']), reset=(i==0))
+        model.train_batch(data, int(args['clip']), reset=(i == 0))
         pbar.set_description(model.print_loss())
         # break
     if (epoch + 1) % int(args['evalp']) == 0:
@@ -54,6 +54,6 @@ for epoch in range(200):
         else:
             cnt += 1
 
-        if cnt == 8 or (acc == 1.0 and early_stop == None):
+        if cnt == 8 or (acc == 1.0 and early_stop is None):
             print("Ran out of patient, early stop...")
             break

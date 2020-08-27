@@ -1,11 +1,13 @@
 # import matplotlib.pyplot as plt
 # import seaborn as sns
 import json
+import os
 import random
 
 import numpy as np
 from torch import optim
 from torch.optim import lr_scheduler
+from tqdm import tqdm
 
 from models.modules import *
 from utils.masked_cross_entropy import *
@@ -63,7 +65,7 @@ class GLMP(nn.Module):
         print_loss_v = self.loss_v / self.print_every
         print_loss_l = self.loss_l / self.print_every
         self.print_every += 1
-        return 'L:{:.2f},LE:{:.2f},LG:{:.2f},LP:{:.2f}'.format(print_loss_avg, print_loss_g, print_loss_v, print_loss_l)
+        return f'L:{print_loss_avg:.2f}, LE: {print_loss_g:.2f}, LG:{print_loss_v:.2f}, LP: {print_loss_l:.2f}'
 
     def save_model(self, dec_type):
         name_data = "KVR/" if self.task=='' else "BABI/"
@@ -271,7 +273,7 @@ class GLMP(nn.Module):
         else:
             dia_acc = 0
             for k in dialog_acc_dict.keys():
-                if len(dialog_acc_dict[k])==sum(dialog_acc_dict[k]):
+                if len(dialog_acc_dict[k]) == sum(dialog_acc_dict[k]):
                     dia_acc += 1
             print("Dialog Accuracy:\t"+str(dia_acc*1.0/len(dialog_acc_dict.keys())))
 
@@ -305,8 +307,8 @@ class GLMP(nn.Module):
                 if p in global_entity_list or p in local_kb_word:
                     if p not in gold:
                         FP += 1
-            precision = TP / float(TP+FP) if (TP+FP)!=0 else 0
-            recall = TP / float(TP+FN) if (TP+FN)!=0 else 0
+            precision = TP / float(TP + FP) if (TP + FP) != 0 else 0
+            recall = TP / float(TP + FN) if (TP + FN) != 0 else 0
             F1 = 2 * precision * recall / float(precision + recall) if (precision + recall) != 0 else 0
         else:
             precision, recall, F1, count = 0, 0, 0, 0
@@ -322,7 +324,7 @@ class GLMP(nn.Module):
                 print(kb_temp)
         flag_uttr, uttr = '$u', []
         for word_idx, word_arr in enumerate(data['context_arr_plain'][batch_idx][kb_len:]):
-            if word_arr[1]==flag_uttr:
+            if word_arr[1] == flag_uttr:
                 uttr.append(word_arr[0])
             else:
                 print(f'{flag_uttr} : {" ".join(uttr)}')
